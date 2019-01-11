@@ -1,185 +1,123 @@
+/**
+ *  @file
+ *  @copyright defined in eos/LICENSE.txt
+ */
 
-#include <string>
+#include "eosio.token.hpp"
 
-#include <eosiolib/eosio.hpp>
-#include <eosiolib/asset.hpp>
+namespace eosio {
 
-#include <eosiolib/multi_index.hpp>
+void token::create( account_name issuer,
+                    asset        maximum_supply )
+{
+    require_auth( _self );
 
-#include <eosio.token/eosio.token.hpp>
+    auto sym = maximum_supply.symbol;
+    eosio_assert( sym.is_valid(), "invalid symbol name" );
+    eosio_assert( maximum_supply.is_valid(), "invalid supply");
+    eosio_assert( maximum_supply.amount > 0, "max-supply must be positive");
 
+    stats statstable( _self, sym.name() );
+    auto existing = statstable.find( sym.name() );
+    eosio_assert( existing == statstable.end(), "token with symbol already exists" );
 
-
-#include <eosiolib/print.hpp>
-#include <eosiolib/datastream.hpp>
-#include <eosiolib/serialize.hpp>
-
-#include <eosiolib/privileged.h>
-#include <eosiolib/transaction.hpp>
-
-
-
-
-#include <cmath>
-#include <map>
-
-
-using eosio::asset;
-
-using namespace eosio;
-
-
-#define TOKENHOLDER N(helloworld11) // owner of token contract
-
-class betstake : public eosio::contract {
-
-    static constexpr uint32_t refund_delay_sec = 24 * 3600;
-
-
-
-    private:
-
-        /// @abi table unstaking
-        struct unstaking {
-            account_name    owner;
-            asset           amount;
-            time  			request_time;
-
-            uint64_t primary_key()const { return owner; }
-
-            EOSLIB_SERIALIZE( unstaking, (owner)(amount)(request_time) )
-        };
-
-
-        /// @abi table account i64
-        struct account {
-            account_name owner;
-            asset        balance;
-
-            bool is_empty() const { return !(balance.amount); }
-            uint64_t primary_key() const { return owner; }
-
-            EOSLIB_SERIALIZE( account, (owner)(balance) )
-        };
-
-        typedef eosio::multi_index< N(unstaking), unstaking> unstaking_index;
-        typedef eosio::multi_index< N(account), account> account_index;
-
-        account_index   accounts;
-        unstaking_index unstakes;
-
-
-
-    public:
-	
-		betstake(account_name self):eosio::contract(self),
-			// 初始化列表
-			accounts(_self, _self),
-			unstakes(_self, _self)
-		{}
-		
-        // @abi action
-        void transfer(const account_name from, const account_name to, const asset& quantity, const std::string& memo) {
-
-            if (from == _self || to != _self) {
-				return;
-			}
-
-            eosio_assert( quantity.is_valid(), "Invalid asset");
-            eosio_assert( quantity.amount > 0, "must stake positive quantity");
-
-            auto itr = accounts.find(from);
-            if( itr == accounts.end() ) {
-                itr = accounts.emplace(_self, [&](auto& acnt){
-                    acnt.owner = from;
-                });
-            };
-
-            accounts.modify( itr, 0, [&]( auto& acnt ) {
-                acnt.balance += quantity;
-            });
-        }
-
-        // @abi action
-        void unstfake(const account_name to, const asset& quantity) {
-            require_auth(to);
-
-            eosio_assert( quantity.is_valid(), "Invalid asset");
-            eosio_assert( quantity.amount > 0, "must stake positive quantity");
-
-            auto itr = accounts.find(to);
-            eosio_assert(itr != accounts.end(), "unknown account");
-
-            accounts.modify(itr, 0, [&](auto& acnt) {
-                eosio_assert(acnt.balance >= quantity, "insufficient balance");
-                acnt.balance -= quantity;
-            });
-
-            auto req_itr = unstakes.find(to);
-            if(req_itr == unstakes.end()) {
-                req_itr = unstakes.emplace(_self, [&](auto& acnt){
-                    acnt.owner = to;
-                });
-            };
-
-            unstakes.modify(req_itr, 0, [&](auto& acnt){
-                acnt.amount += quantity;
-            });
-
-            eosio::transaction txn{};
-            txn.actions.emplace_back(
-                eosio::permission_level(_self, N(active)),
-                _self,
-                N(refund),
-                std::make_tuple(to)
-            );
-            txn.delay_sec = 86400;
-            txn.send(to, to,true);
-
-            if(itr->is_empty()) {
-                accounts.erase(itr);
-            };          
-        }
-		
-		// @abi action
-        void refund(const account_name owner) {
-            require_auth(owner);
-
-            auto req = unstakes.find(owner);
-            eosio_assert(req != unstakes.end(), "refund request not found");
-            //eosio_assert(req->request_time + refund_delay_sec <= time_point_sec(now()), "refund is not available yet");
-
-            action(
-                permission_level{_self, N(active)},
-                TOKENHOLDER,
-                N(transfer),
-                std::make_tuple(
-                    _self,
-                    N(owner),
-                    req->amount,
-                    ""
-                )
-            ).send();
-
-            unstakes.erase(req);
-        }
-};
-
-#define EOSIO_ABI_EX( TYPE, MEMBERS ) \
-extern "C" { \
-   void apply( uint64_t receiver, uint64_t code, uint64_t action ) { \
-      auto self = receiver; \
-      if( code == self || code == TOKENHOLDER) { \
-      	 if( action == N(transfer)){ \
-      	 	eosio_assert( code == TOKENHOLDER, "Must transfer PLY"); \
-      	 } \
-         TYPE thiscontract( self ); \
-         switch( action ) { \
-            EOSIO_API( TYPE, MEMBERS ) \
-         } \
-         /* does not allow destructor of thiscontract to run: eosio_exit(0); */ \
-      } \
-   } \
+    statstable.emplace( _self, [&]( auto& s ) {
+       s.supply.symbol = maximum_supply.symbol;
+       s.max_supply    = maximum_supply;
+       s.issuer        = issuer;
+    });
 }
 
-EOSIO_ABI_EX( betstake, (transfer)(unstfake) )
+
+void token::issue( account_name to, asset quantity, string memo )
+{
+    auto sym = quantity.symbol;
+    eosio_assert( sym.is_valid(), "invalid symbol name" );
+    eosio_assert( memo.size() <= 256, "memo has more than 256 bytes" );
+
+    auto sym_name = sym.name();
+    stats statstable( _self, sym_name );
+    auto existing = statstable.find( sym_name );
+    eosio_assert( existing != statstable.end(), "token with symbol does not exist, create token before issue" );
+    const auto& st = *existing;
+
+    require_auth( st.issuer );
+    eosio_assert( quantity.is_valid(), "invalid quantity" );
+    eosio_assert( quantity.amount > 0, "must issue positive quantity" );
+
+    eosio_assert( quantity.symbol == st.supply.symbol, "symbol precision mismatch" );
+    eosio_assert( quantity.amount <= st.max_supply.amount - st.supply.amount, "quantity exceeds available supply");
+
+    statstable.modify( st, 0, [&]( auto& s ) {
+       s.supply += quantity;
+    });
+
+    add_balance( st.issuer, quantity, st.issuer );
+
+    if( to != st.issuer ) {
+       SEND_INLINE_ACTION( *this, transfer, {st.issuer,N(active)}, {st.issuer, to, quantity, memo} );
+    }
+}
+
+void token::transfer( account_name from,
+                      account_name to,
+                      asset        quantity,
+                      string       memo )
+{
+    eosio_assert( from != to, "cannot transfer to self" );
+    require_auth( from );
+    eosio_assert( is_account( to ), "to account does not exist");
+    auto sym = quantity.symbol.name();
+    stats statstable( _self, sym );
+    const auto& st = statstable.get( sym );
+
+    require_recipient( from );
+    require_recipient( to );
+
+    eosio_assert( quantity.is_valid(), "invalid quantity" );
+    eosio_assert( quantity.amount > 0, "must transfer positive quantity" );
+    eosio_assert( quantity.symbol == st.supply.symbol, "symbol precision mismatch" );
+    eosio_assert( memo.size() <= 256, "memo has more than 256 bytes" );
+
+	
+
+    sub_balance( from, quantity );
+    add_balance( to, quantity, from );
+}
+
+void token::sub_balance( account_name owner, asset value ) {
+   accounts from_acnts( _self, owner );
+
+   const auto& from = from_acnts.get( value.symbol.name(), "no balance object found" );
+   eosio_assert( from.balance.amount >= value.amount, "overdrawn balance" );
+
+
+   if( from.balance.amount == value.amount ) {
+      from_acnts.erase( from );
+   } else {
+      from_acnts.modify( from, owner, [&]( auto& a ) {
+          a.balance -= value;
+      });
+   }
+}
+
+void token::add_balance( account_name owner, asset value, account_name ram_payer )
+{
+   accounts to_acnts( _self, owner );
+   auto to = to_acnts.find( value.symbol.name() );
+   if( to == to_acnts.end() ) {
+      to_acnts.emplace( ram_payer, [&]( auto& a ){
+        a.balance = value;
+      });
+   } else {
+      to_acnts.modify( to, 0, [&]( auto& a ) {
+        a.balance += value;
+      });
+   }
+}
+
+
+
+} /// namespace eosio
+
+EOSIO_ABI( eosio::token, (create)(issue)(transfer) )
