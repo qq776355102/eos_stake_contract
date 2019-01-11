@@ -231,17 +231,6 @@ class betstake : public eosio::contract {
         }
 		
 		
-		// @abi action
-		uint64_t findstaking(const account_name owner) const {
-			
-			stakes stakestable(_self, owner );
-			const auto& st = = stakestable.get(owner)
-
-			
-			return st.balance;
-		}
-		
-		
 };
 
 #define EOSIO_ABI_EX( TYPE, MEMBERS ) \
@@ -261,4 +250,4 @@ extern "C" { \
    } \
 }
 
-EOSIO_ABI_EX( betstake, (transfer)(unstfake)(refund)(findstaking))
+EOSIO_ABI_EX( betstake, (transfer)(unstfake)(refund))
