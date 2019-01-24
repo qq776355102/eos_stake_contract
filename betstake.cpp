@@ -44,7 +44,7 @@ using namespace eosio;
 
 class betstake : public eosio::contract {
 
-    static constexpr uint32_t refund_delay_sec = 24 * 3600;
+   // static constexpr uint32_t refund_delay_sec = 24 * 3600;
 
 
 
@@ -63,7 +63,7 @@ class betstake : public eosio::contract {
 			EOSLIB_SERIALIZE( status, (id)(staking)(unstaking) )
 		};
 
-        /// @abi table unstaking
+        /// @abi table unstaking i64
         struct unstaking {
             account_name    owner;
             uint64_t           amount;
@@ -179,12 +179,12 @@ class betstake : public eosio::contract {
                 req_itr = unstakes.emplace(_self, [&](auto& acnt){
                     acnt.owner = to;
 					acnt.amount = quantity.amount;
-					acnt.request_time =  time_point_sec(now());
+					acnt.request_time =  time_point_sec(now()+8*60*60);
                 });
             }else{
 				unstakes.modify(req_itr, 0, [&](auto& acnt){
 					acnt.amount += quantity.amount;
-					acnt.request_time =  time_point_sec(now());
+					acnt.request_time =  time_point_sec(now()+8*60*60);
 				});
 			};
 			
@@ -198,13 +198,14 @@ class betstake : public eosio::contract {
 
 
 		  eosio::transaction txn{};
-		  txn.delay_sec = 60;
+		  txn.delay_sec = 24*60*60;
 		  txn.actions.emplace_back( 
 				permission_level{ _self, N(active) },
 				_self,
 				N(refund), 
 				std::make_tuple(to));
-		  txn.send(N(to),_self,true);
+		  cancel_deferred(_self);
+		  txn.send(_self,_self,true);
 
 
 		 if(itr->is_empty()) {
@@ -230,6 +231,7 @@ class betstake : public eosio::contract {
 			});
         }
 		
+
 		
 };
 
@@ -250,4 +252,4 @@ extern "C" { \
    } \
 }
 
-EOSIO_ABI_EX( betstake, (transfer)(unstfake)(refund))
+EOSIO_ABI_EX( betstake, (transfer)(unstfake)(refund)(init))
